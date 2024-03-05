@@ -1,13 +1,12 @@
-use smol::{io, net, prelude::*, Unblock};
+use std::io::stdin;
 
-fn main() -> io::Result<()> {
-    smol::block_on(async {
-        let mut stream = net::TcpStream::connect("example.com:80").await?;
-        let req = b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n";
-        stream.write_all(req).await?;
+use game_lang::{interpreter::Interpreter, lexer::Lexer, parser};
 
-        let mut stdout = Unblock::new(std::io::stdout());
-        io::copy(stream, &mut stdout).await?;
-        Ok(())
-    })
+fn main() {
+    for line in stdin().lines() {
+        let line = line.unwrap();
+        let expr = parser::expr(&mut Lexer::lex(&line));
+        let res = Interpreter.eval_expr(&expr).unwrap();
+        println!("-> {res}");
+    }
 }

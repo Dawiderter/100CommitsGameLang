@@ -1,11 +1,18 @@
-use std::str::FromStr;
+use std::{ops::Range, str::FromStr};
 
 use logos::Logos;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct LexError;
 
-#[derive(Debug, PartialEq, strum_macros::Display, strum_macros::EnumString)]
+#[derive(Debug)]
+pub struct Lexer<'source> {
+    inner: logos::Lexer<'source, Token<'source>>,
+    peeked: Option<Result<Token<'source>, LexError>>,
+    finished: bool,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, strum_macros::Display, strum_macros::EnumString)]
 pub enum Operator {
     #[strum(to_string = "+")]
     Add,
@@ -37,8 +44,9 @@ pub enum Operator {
     Not,
 }
 
-#[derive(Debug, PartialEq, Logos)]
+#[derive(Debug, Clone, PartialEq, Logos)]
 #[logos(skip r"[ \t\n\f]+")]
+#[logos(error=LexError)]
 pub enum Token<'source> {
     #[token("{")]
     BraceOpen,
@@ -60,6 +68,59 @@ pub enum Token<'source> {
     Identifier(&'source str),
     #[regex(r#""[^"]*""#, |lex| { let s = lex.slice(); &s[1..(s.len() - 1)]  })]
     String(&'source str),
+    #[token("true", |_| { true })]
+    #[token("false", |_| { false })]
+    Bool(bool),
+    EOF,
+}
+
+impl<'source> Lexer<'source> {
+    pub fn lex(source: &'source str) -> Self {
+        Self {
+            inner: Token::lexer(source),
+            peeked: None,
+            finished: false,
+        }
+    }
+
+    pub fn slice(&self) -> &str {
+        self.inner.slice()
+    }
+
+    pub fn span(&self) -> Range<usize> {
+        self.inner.span()
+    }
+
+    pub fn peek(&mut self) -> Option<&Result<Token<'source>, LexError>> {
+        if self.peeked.is_none() {
+            self.peeked = self.next();
+        }
+
+        self.peeked.as_ref()
+    }
+}
+
+impl<'source> Iterator for Lexer<'source> {
+    type Item = Result<Token<'source>, LexError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(peeked) = self.peeked.take() {
+            return Some(peeked);
+        }
+
+        if self.finished {
+            return None;
+        }
+
+        let maybe_inner_next = self.inner.next();
+
+        let Some(inner_next) = maybe_inner_next else {
+            self.finished = true;
+            return Some(Ok(Token::EOF));
+        };
+
+        Some(inner_next)
+    }
 }
 
 #[cfg(test)]
@@ -68,7 +129,7 @@ mod tests {
 
     #[test]
     fn lex_test() {
-        let mut lex = Token::lexer(r#"99aaa"#);
+        let mut lex = Lexer::lex(r#"99aaa"#);
 
         while let Some(tok) = lex.next() {
             println!("{:?} {}", tok, lex.slice())
@@ -77,10 +138,47 @@ mod tests {
 
     #[test]
     fn op_test() {
-        let mut lex = Token::lexer(r#"+ - * / == != > < >= <= && || !"#);
+        let mut lex = Lexer::lex(r#"+ - * / == != > < >= <= && || !"#);
 
         while let Some(tok) = lex.next() {
             println!("{:?} {}", tok, lex.slice())
         }
+    }
+
+    #[test]
+    fn peek_test() {
+        let mut lex = Lexer::lex(r#"arg bar 70.9 %"#);
+
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.next());
+        println!("{:?} {}", lex.span(), lex.slice());
+
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.next());
+        println!("{:?} {}", lex.span(), lex.slice());
+
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.next());
+        println!("{:?} {}", lex.span(), lex.slice());
+
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.next());
+        println!("{:?} {}", lex.span(), lex.slice());
+
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.next());
+        println!("{:?} {}", lex.span(), lex.slice());
+
+        println!("{:?}", lex.peek());
+        println!("{:?} {}", lex.span(), lex.slice());
+        println!("{:?}", lex.next());
+        println!("{:?} {}", lex.span(), lex.slice());
     }
 }
