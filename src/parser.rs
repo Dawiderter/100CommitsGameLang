@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{
-    ast::{Expr, Value},
+    ast::{Expr, Stmt, Value, Var},
     lexer::{Lexer, Operator, Token},
 };
 
@@ -12,8 +12,45 @@ pub enum ParserError {
     LexerError(Range<usize>),
 }
 
-pub fn expr(lexer: &mut Lexer<'_>) -> Expr {
-    expr_bp(lexer, 0).unwrap()
+pub fn stmt(lexer: &mut Lexer<'_>) -> Stmt {
+    let peeked = peek_token(lexer).unwrap();
+
+    if matches!(peeked, Token::Let) {
+        next_token(lexer).unwrap();
+        let tok_id = next_token(lexer).unwrap();
+        let Token::Identifier(id) = tok_id else { panic!() };
+
+        assert_eq!(peek_token(lexer).unwrap(), &Token::Assign);
+        next_token(lexer).unwrap();
+
+        let expr = expr(lexer).unwrap();
+
+        assert_eq!(peek_token(lexer).unwrap(), &Token::Semicolon);
+        next_token(lexer).unwrap();
+
+        return Stmt::Declaration(id.to_owned(), expr);
+    }
+
+    let left = expr(lexer).unwrap();
+    if let Expr::Variable(var) = left {
+        assert_eq!(peek_token(lexer).unwrap(), &Token::Assign);
+        next_token(lexer).unwrap();
+
+        let right = expr(lexer).unwrap();
+
+        assert_eq!(peek_token(lexer).unwrap(), &Token::Semicolon);
+        next_token(lexer).unwrap();
+
+        return Stmt::Assign(var, right);
+    }
+
+    assert_eq!(peek_token(lexer).unwrap(), &Token::Semicolon);
+    next_token(lexer).unwrap();
+    Stmt::Expr(left)
+}
+
+pub fn expr(lexer: &mut Lexer<'_>) -> Result<Expr, ParserError> {
+    expr_bp(lexer, 0)
 }
 
 fn expr_bp(lexer: &mut Lexer<'_>, min_bp: u8) -> Result<Expr, ParserError> {
@@ -21,29 +58,29 @@ fn expr_bp(lexer: &mut Lexer<'_>, min_bp: u8) -> Result<Expr, ParserError> {
         Token::Number(n) => Expr::Value(Value::Number(n)),
         Token::String(s) => Expr::Value(Value::String(s.to_owned())),
         Token::Bool(b) => Expr::Value(Value::Bool(b)),
+        Token::Identifier(s) => Expr::Variable(Var { name : s.to_owned() } ),
+        Token::Operator(Operator::ParenOpen) => {
+            let left = expr_bp(lexer, 0)?;
+            let end_token = next_token(lexer)?;
+            if end_token != Token::Operator(Operator::ParenClose) {
+                return Err(ParserError::UnexpectedToken(lexer.span()));
+            };
+            left
+        }
         Token::Operator(op) => {
             let (_, r_bp) = prefix_binding_power(op).ok_or(ParserError::UnexpectedToken(lexer.span()))?;
             let right = expr_bp(lexer, r_bp)?;
 
             Expr::Unary(op, Box::new(right))
         }
-        Token::ParenOpen => {
-            let left = expr_bp(lexer, 0)?;
-            let end_token = next_token(lexer)?;
-            if end_token != Token::ParenClose {
-                eprintln!("{:?}", end_token);
-                return Err(ParserError::UnexpectedToken(lexer.span()));
-            };
-            left
-        }
         _ => return Err(ParserError::UnexpectedToken(lexer.span())),
     };
 
     loop {
         let &op = match peek_token(lexer)? {
-            Token::EOF | Token::ParenClose => break,
+            Token::EOF => break,
             Token::Operator(op) => op,
-            _ => return Err(ParserError::UnexpectedToken(lexer.span())),
+            _ => break,
         };
 
         if let Some((l_bp, _)) = postfix_binding_power(op) {
@@ -95,6 +132,7 @@ fn infix_binding_power(op: Operator) -> Option<(u8, u8)> {
 
 fn postfix_binding_power(op: Operator) -> Option<(u8, ())> {
     let bp = match op {
+        // Operator::ParenOpen => (220, ()),
         _ => return None,
     };
     Some(bp)
@@ -131,6 +169,6 @@ mod tests {
 
         let parsed = expr(&mut Lexer::lex(input));
 
-        println!("{}", parsed);
+        println!("{:?}", parsed);
     }
 }

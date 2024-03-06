@@ -42,6 +42,10 @@ pub enum Operator {
     Or,
     #[strum(to_string = "!")]
     Not,
+    #[strum(to_string = "(")]
+    ParenOpen,
+    #[strum(to_string = ")")]
+    ParenClose,
 }
 
 #[derive(Debug, Clone, PartialEq, Logos)]
@@ -52,13 +56,13 @@ pub enum Token<'source> {
     BraceOpen,
     #[token("}")]
     BraceClose,
-    #[token("(")]
-    ParenOpen,
-    #[token(")")]
-    ParenClose,
     #[token("=")]
     Assign,
-    #[regex(r"[+\-*/%!><]|[=><!]=|(&&)|(\|\|)", |lex| Operator::from_str(lex.slice()).ok())]
+    #[token("let")]
+    Let,
+    #[token(";")]
+    Semicolon,
+    #[regex(r"[+\-*/%!><]|[=><!]=|(&&)|(\|\|)|\(|\)", |lex| Operator::from_str(lex.slice()).ok())]
     Operator(Operator),
     #[token(".")]
     Period,

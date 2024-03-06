@@ -1,14 +1,45 @@
+use std::collections::HashMap;
+
 use crate::ast::*;
 use crate::lexer::Operator;
 
 #[derive(Debug, Clone, Copy)]
 pub enum InterpreterError {
     TypeMismatch,
+    VarNotDeclared,
 }
 
-pub struct Interpreter;
+pub struct Interpreter {
+    env: HashMap<String, Value>
+}
 
 impl Interpreter {
+    pub fn new() -> Self {
+        Self { env: HashMap::new() }
+    }
+
+    pub fn eval_stmt(&mut self, stmt: &Stmt) -> Result<Option<Value>, InterpreterError>{
+        match stmt {
+            Stmt::Declaration(name, e) => {
+                let res = self.eval_expr(e)?;
+                self.env.insert(name.clone(), res);
+                Ok(None)
+            },
+            Stmt::Assign(var, e) => {
+                let res = self.eval_expr(e)?;
+                if !self.env.contains_key(&var.name) {
+                    return Err(InterpreterError::VarNotDeclared);
+                }
+                self.env.insert(var.name.clone(), res);
+                Ok(None)
+            },
+            Stmt::Expr(e) => {
+                let res = self.eval_expr(e)?;
+                Ok(Some(res))
+            },
+        }
+    }
+
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value, InterpreterError> {
         match expr {
             Expr::Value(val) => Ok(val.to_owned()),
@@ -54,6 +85,11 @@ impl Interpreter {
 
                 Ok(res)
             }
+            Expr::Variable(var) => {
+                let value = self.env.get(&var.name).ok_or(InterpreterError::VarNotDeclared)?;
+
+                Ok(value.to_owned())
+            },
         }
     }
 }
@@ -79,6 +115,6 @@ mod tests {
 
         println!("{expr}");
 
-        println!("result: {}", Interpreter.eval_expr(&expr).unwrap());
+        println!("result: {}", Interpreter::new().eval_expr(&expr).unwrap());
     }
 }
