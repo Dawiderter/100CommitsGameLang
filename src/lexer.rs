@@ -5,7 +5,7 @@ use logos::Logos;
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct LexError;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Lexer<'source> {
     inner: logos::Lexer<'source, Token<'source>>,
     peeked: Option<Result<Token<'source>, LexError>>,
@@ -48,7 +48,8 @@ pub enum Operator {
     ParenClose,
 }
 
-#[derive(Debug, Clone, PartialEq, Logos)]
+#[derive(Debug, Clone, PartialEq, Logos, strum_macros::EnumDiscriminants)]
+#[strum_discriminants(name(TokenType))]
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(error=LexError)]
 pub enum Token<'source> {
