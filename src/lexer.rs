@@ -76,6 +76,10 @@ pub enum Token<'source> {
     #[token("true", |_| { true })]
     #[token("false", |_| { false })]
     Bool(bool),
+    #[token("if")]
+    If,
+    #[token("else")]
+    Else,
     EOF,
 }
 

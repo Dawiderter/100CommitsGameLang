@@ -69,6 +69,27 @@ impl<'source> Parser<'source> {
             Token::String(s) => Expr::Value(Value::String(s.to_owned())),
             Token::Bool(b) => Expr::Value(Value::Bool(b)),
             Token::Identifier(s) => Expr::Variable(Var { name: s.to_owned() }),
+            Token::If => {
+                let cond = self.expr()?;
+
+                self.expect(TokenType::BraceOpen)?;
+                let then = self.expr()?;
+                self.expect(TokenType::BraceClose)?;
+
+                let els = if self.matches(TokenType::Else)? {
+                    self.next_token()?;
+
+                    self.expect(TokenType::BraceOpen)?;
+                    let els = self.expr()?;
+                    self.expect(TokenType::BraceClose)?;
+
+                    Some(els)
+                } else {
+                    None
+                };
+                
+                Expr::If(Box::new(cond), Box::new(then), els.map(Box::new))
+            }
             Token::Operator(Operator::ParenOpen) => {
                 let left = self.expr()?;
                 let end_token = self.next_token()?;
@@ -100,7 +121,6 @@ impl<'source> Parser<'source> {
 
         loop {
             let &op = match self.peek_token()? {
-                Token::EOF => break,
                 Token::Operator(op) => op,
                 _ => break,
             };

@@ -7,6 +7,7 @@ use crate::lexer::Operator;
 pub enum InterpreterError {
     TypeMismatch,
     VarNotDeclared,
+    MissingElse,
 }
 
 pub struct Interpreter {
@@ -90,6 +91,20 @@ impl Interpreter {
 
                 Ok(value.to_owned())
             },
+            Expr::If(c, t, e) => {
+                let cond_res = self.eval_expr(c)?;
+
+                let Value::Bool(res) = cond_res else { return Err(InterpreterError::TypeMismatch) };
+
+                if res {
+                    self.eval_expr(t)
+                } else if let Some(e) = e {
+                    self.eval_expr(e)
+                } else {
+                    Err(InterpreterError::MissingElse)
+                }
+            },
+            
         }
     }
 }

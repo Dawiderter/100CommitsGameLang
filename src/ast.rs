@@ -19,6 +19,7 @@ pub enum Expr {
     Value(Value),
     Binary(Operator, Box<Expr>, Box<Expr>),
     Unary(Operator, Box<Expr>),
+    If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
     Variable(Var),
 }
 
@@ -59,6 +60,13 @@ impl Display for Expr {
             }
             Expr::Variable(var) => {
                 write!(f, "{var}")
+            },
+            Expr::If(c, t, e) => {
+                if let Some(e) = e {
+                    write!(f, "if {c} then {t} else {e}")
+                } else {
+                    write!(f, "if {c} then {t}")
+                }
             },
         }
     }
