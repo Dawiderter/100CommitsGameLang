@@ -2,6 +2,7 @@ use std::io::stdin;
 
 use game_lang::{interpreter::Interpreter, lexer::Lexer, parser::Parser};
 
+/// Simple REPL
 fn main() {
     let mut int = Interpreter::new();
 
