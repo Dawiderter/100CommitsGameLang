@@ -42,17 +42,17 @@ pub enum Operator {
     Or,
     #[strum(to_string = "!")]
     Not,
-    #[strum(to_string = "(")]
-    ParenOpen,
-    #[strum(to_string = ")")]
-    ParenClose,
 }
 
 #[derive(Debug, Clone, PartialEq, Logos, strum_macros::EnumDiscriminants)]
-#[strum_discriminants(name(TokenType))]
+#[strum_discriminants(name(TokenKind))]
 #[logos(skip r"[ \t\n\f]+")]
 #[logos(error=LexError)]
 pub enum Token<'source> {
+    #[token("(")]
+    ParenOpen,
+    #[token(")")]
+    ParenClose,
     #[token("{")]
     BraceOpen,
     #[token("}")]
@@ -61,12 +61,16 @@ pub enum Token<'source> {
     Assign,
     #[token("let")]
     Let,
+    #[token("if")]
+    If,
+    #[token("else")]
+    Else,
     #[token(";")]
     Semicolon,
-    #[regex(r"[+\-*/%!><]|[=><!]=|(&&)|(\|\|)|\(|\)", |lex| Operator::from_str(lex.slice()).ok())]
-    Operator(Operator),
     #[token(".")]
     Period,
+    #[regex(r"[+\-*/%!><]|[=><!]=|(&&)|(\|\|)", |lex| Operator::from_str(lex.slice()).ok())]
+    Operator(Operator),
     #[regex(r"[0-9]+\.?[0-9]*", |lex| lex.slice().parse().ok())]
     Number(f64),
     #[regex(r"\p{Alphabetic}(\p{Alphabetic}|\d|_)*")]
@@ -76,10 +80,6 @@ pub enum Token<'source> {
     #[token("true", |_| { true })]
     #[token("false", |_| { false })]
     Bool(bool),
-    #[token("if")]
-    If,
-    #[token("else")]
-    Else,
     EOF,
 }
 

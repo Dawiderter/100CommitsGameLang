@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use crate::{
     ast::{Expr, Stmt, Value, Var},
-    lexer::{Lexer, Operator, Token, TokenType},
+    lexer::{Lexer, Operator, Token, TokenKind},
 };
 
 #[derive(Debug)]
@@ -10,7 +10,7 @@ pub enum ParserError {
     EndOfInput,
     UnexpectedToken {
         span: Range<usize>,
-        expected: Vec<TokenType>,
+        expected: Vec<TokenKind>,
     },
     UnexpectedOperator(Range<usize>),
     WrongAssignment(Range<usize>),
@@ -29,32 +29,32 @@ impl<'source> Parser<'source> {
     }
 
     pub fn stmt(&mut self) -> Result<Stmt, ParserError> {
-        if self.matches(TokenType::Let)? {
+        if self.matches(TokenKind::Let)? {
             self.next_token()?;
-            let Token::Identifier(id) = self.next_token()? else { return Err(ParserError::UnexpectedToken { span: self.token_span(), expected: vec![TokenType::Identifier] }); };
+            let Token::Identifier(id) = self.next_token()? else { return Err(ParserError::UnexpectedToken { span: self.token_span(), expected: vec![TokenKind::Identifier] }); };
 
-            self.expect(TokenType::Assign)?;
+            self.expect(TokenKind::Assign)?;
 
             let expr = self.expr()?;
 
-            self.expect(TokenType::Semicolon)?;
+            self.expect(TokenKind::Semicolon)?;
 
             return Ok(Stmt::Declaration(id.to_owned(), expr));
         }
 
         let left = self.expr()?;
-        if self.matches(TokenType::Assign)? {
+        if self.matches(TokenKind::Assign)? {
             self.next_token()?;
             let Expr::Variable(var) = left else { return Err(ParserError::WrongAssignment(self.token_span())); };
 
             let right = self.expr()?;
 
-            self.expect(TokenType::Semicolon)?;
+            self.expect(TokenKind::Semicolon)?;
 
             return Ok(Stmt::Assign(var, right));
         }
 
-        self.expect(TokenType::Semicolon)?;
+        self.expect(TokenKind::Semicolon)?;
 
         Ok(Stmt::Expr(left))
     }
@@ -72,16 +72,16 @@ impl<'source> Parser<'source> {
             Token::If => {
                 let cond = self.expr()?;
 
-                self.expect(TokenType::BraceOpen)?;
+                self.expect(TokenKind::BraceOpen)?;
                 let then = self.expr()?;
-                self.expect(TokenType::BraceClose)?;
+                self.expect(TokenKind::BraceClose)?;
 
-                let els = if self.matches(TokenType::Else)? {
+                let els = if self.matches(TokenKind::Else)? {
                     self.next_token()?;
 
-                    self.expect(TokenType::BraceOpen)?;
+                    self.expect(TokenKind::BraceOpen)?;
                     let els = self.expr()?;
-                    self.expect(TokenType::BraceClose)?;
+                    self.expect(TokenKind::BraceClose)?;
 
                     Some(els)
                 } else {
@@ -90,16 +90,13 @@ impl<'source> Parser<'source> {
                 
                 Expr::If(Box::new(cond), Box::new(then), els.map(Box::new))
             }
-            Token::Operator(Operator::ParenOpen) => {
+            Token::ParenOpen => {
                 let left = self.expr()?;
-                let end_token = self.next_token()?;
-                if end_token != Token::Operator(Operator::ParenClose) {
-                    return Err(ParserError::MissingClosingParen(self.token_span()));
-                };
+                self.expect(TokenKind::ParenClose)?;
                 left
             }
             Token::Operator(op) => {
-                let (_, r_bp) = Self::prefix_binding_power(op)
+                let (_, r_bp) = Self::prefix_binding_power(&Token::Operator(op))
                     .ok_or(ParserError::UnexpectedOperator(self.token_span()))?;
                 let right = self.expr_bp(r_bp)?;
 
@@ -109,41 +106,39 @@ impl<'source> Parser<'source> {
                 return Err(ParserError::UnexpectedToken {
                     span: self.token_span(),
                     expected: vec![
-                        TokenType::Number,
-                        TokenType::String,
-                        TokenType::Bool,
-                        TokenType::Identifier,
-                        TokenType::Operator,
+                        TokenKind::Number,
+                        TokenKind::String,
+                        TokenKind::Bool,
+                        TokenKind::Identifier,
+                        TokenKind::Operator,
                     ],
                 })
             }
         };
 
         loop {
-            let &op = match self.peek_token()? {
-                Token::Operator(op) => op,
-                _ => break,
-            };
+            let tok = self.peek_token()?;
 
-            if let Some((l_bp, _)) = Self::postfix_binding_power(op) {
+            if let Some((l_bp, _)) = Self::postfix_binding_power(tok) {
                 if l_bp < min_bp {
                     break;
                 }
 
                 self.next_token()?;
-                left = Expr::Unary(op, Box::new(left));
+
+                left = Expr::Unary(tok, Box::new(left));
 
                 continue;
             }
 
-            if let Some((l_bp, r_bp)) = Self::infix_binding_power(op) {
+            if let Some((l_bp, r_bp)) = Self::infix_binding_power(tok) {
                 if l_bp < min_bp {
                     break;
                 }
 
                 self.next_token()?;
                 let right = self.expr_bp(r_bp)?;
-                left = Expr::Binary(op, Box::new(left), Box::new(right));
+                left = Expr::Binary(tok, Box::new(left), Box::new(right));
 
                 continue;
             }
@@ -154,16 +149,20 @@ impl<'source> Parser<'source> {
         Ok(left)
     }
 
-    fn prefix_binding_power(op: Operator) -> Option<((), u8)> {
-        let bp = match op {
-            Operator::Add | Operator::Sub | Operator::Not => ((), 201),
+    fn prefix_binding_power(tok: &Token) -> Option<((), u8)> {
+        let bp = match tok {
+            Token::Operator(op) => match op {
+                Operator::Add | Operator::Sub | Operator::Not => ((), 201),
+                _ => return None,
+            }
             _ => return None,
         };
         Some(bp)
     }
 
-    fn infix_binding_power(op: Operator) -> Option<(u8, u8)> {
-        let bp = match op {
+    fn infix_binding_power(tok: &Token) -> Option<(u8, u8)> {
+        let bp = match tok {
+            Token::Operator(op) => match op {
             Operator::Eq
             | Operator::Neq
             | Operator::Leq
@@ -173,25 +172,27 @@ impl<'source> Parser<'source> {
             Operator::Add | Operator::Sub | Operator::Or => (100, 101),
             Operator::Mul | Operator::Div | Operator::Rem | Operator::And => (150, 151),
             _ => return None,
+            },
+            _ => return None,
         };
         Some(bp)
     }
 
-    fn postfix_binding_power(op: Operator) -> Option<(u8, ())> {
-        let bp = match op {
+    fn postfix_binding_power(tok: &Token) -> Option<(u8, ())> {
+        let bp = match tok {
             // Operator::ParenOpen => (220, ()),
             _ => return None,
         };
         Some(bp)
     }
 
-    fn matches(&mut self, ttype: TokenType) -> Result<bool, ParserError> {
+    fn matches(&mut self, ttype: TokenKind) -> Result<bool, ParserError> {
         let peeked = self.peek_token()?;
 
-        Ok(TokenType::from(peeked) == ttype)
+        Ok(TokenKind::from(peeked) == ttype)
     }
 
-    fn expect(&mut self, ttype: TokenType) -> Result<(), ParserError> {
+    fn expect(&mut self, ttype: TokenKind) -> Result<(), ParserError> {
         if self.matches(ttype)? {
             self.next_token()?;
             Ok(())
