@@ -6,16 +6,24 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub enum ParserError {
+pub struct ParserError {
+    kind: ParserErrorKind,
+    span: Range<usize>,
+}
+
+#[derive(Debug)]
+pub enum ParserErrorKind {
     EndOfInput,
-    UnexpectedToken {
-        span: Range<usize>,
-        expected: Vec<TokenKind>,
-    },
-    UnexpectedOperator(Range<usize>),
-    WrongAssignment(Range<usize>),
-    MissingClosingParen(Range<usize>),
-    LexerError(Range<usize>),
+    UnexpectedToken { expected: Vec<TokenKind> },
+    UnexpectedNotPrefixOp,
+    WrongAssignment,
+    LexerError,
+}
+
+impl ParserErrorKind {
+    pub fn with_span(self, span: Range<usize>) -> ParserError {
+        ParserError { kind: self, span }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -31,7 +39,7 @@ impl<'source> Parser<'source> {
     pub fn stmt(&mut self) -> Result<Stmt, ParserError> {
         if self.matches(TokenKind::Let)? {
             self.next_token()?;
-            let Token::Identifier(id) = self.next_token()? else { return Err(ParserError::UnexpectedToken { span: self.token_span(), expected: vec![TokenKind::Identifier] }); };
+            let Token::Identifier(id) = self.next_token()? else { return Err(ParserErrorKind::UnexpectedToken { expected: vec![TokenKind::Identifier] }.with_span(self.token_span())); };
 
             self.expect(TokenKind::Assign)?;
 
@@ -45,7 +53,7 @@ impl<'source> Parser<'source> {
         let left = self.expr()?;
         if self.matches(TokenKind::Assign)? {
             self.next_token()?;
-            let Expr::Variable(var) = left else { return Err(ParserError::WrongAssignment(self.token_span())); };
+            let Expr::Variable(var) = left else { return Err(ParserErrorKind::WrongAssignment.with_span(self.token_span())); };
 
             let right = self.expr()?;
 
@@ -87,7 +95,7 @@ impl<'source> Parser<'source> {
                 } else {
                     None
                 };
-                
+
                 Expr::If(Box::new(cond), Box::new(then), els.map(Box::new))
             }
             Token::ParenOpen => {
@@ -97,22 +105,23 @@ impl<'source> Parser<'source> {
             }
             Token::Operator(op) => {
                 let (_, r_bp) = Self::prefix_binding_power(&Token::Operator(op))
-                    .ok_or(ParserError::UnexpectedOperator(self.token_span()))?;
+                    .ok_or(ParserErrorKind::UnexpectedNotPrefixOp.with_span(self.token_span()))?;
                 let right = self.expr_bp(r_bp)?;
 
                 Expr::Unary(op, Box::new(right))
             }
             _ => {
-                return Err(ParserError::UnexpectedToken {
-                    span: self.token_span(),
+                return Err(ParserErrorKind::UnexpectedToken {
                     expected: vec![
                         TokenKind::Number,
                         TokenKind::String,
                         TokenKind::Bool,
                         TokenKind::Identifier,
                         TokenKind::Operator,
+                        TokenKind::ParenOpen,
                     ],
-                })
+                }
+                .with_span(self.token_span()));
             }
         };
 
@@ -124,9 +133,10 @@ impl<'source> Parser<'source> {
                     break;
                 }
 
-                self.next_token()?;
+                let &Token::Operator(op) = tok else { unreachable!() };
 
-                left = Expr::Unary(tok, Box::new(left));
+                self.next_token()?;
+                left = Expr::Unary(op, Box::new(left));
 
                 continue;
             }
@@ -136,9 +146,11 @@ impl<'source> Parser<'source> {
                     break;
                 }
 
+                let &Token::Operator(op) = tok else { unreachable!() };
+
                 self.next_token()?;
                 let right = self.expr_bp(r_bp)?;
-                left = Expr::Binary(tok, Box::new(left), Box::new(right));
+                left = Expr::Binary(op, Box::new(left), Box::new(right));
 
                 continue;
             }
@@ -154,7 +166,7 @@ impl<'source> Parser<'source> {
             Token::Operator(op) => match op {
                 Operator::Add | Operator::Sub | Operator::Not => ((), 201),
                 _ => return None,
-            }
+            },
             _ => return None,
         };
         Some(bp)
@@ -163,15 +175,15 @@ impl<'source> Parser<'source> {
     fn infix_binding_power(tok: &Token) -> Option<(u8, u8)> {
         let bp = match tok {
             Token::Operator(op) => match op {
-            Operator::Eq
-            | Operator::Neq
-            | Operator::Leq
-            | Operator::Geq
-            | Operator::Gr
-            | Operator::Le => (50, 51),
-            Operator::Add | Operator::Sub | Operator::Or => (100, 101),
-            Operator::Mul | Operator::Div | Operator::Rem | Operator::And => (150, 151),
-            _ => return None,
+                Operator::Eq
+                | Operator::Neq
+                | Operator::Leq
+                | Operator::Geq
+                | Operator::Gr
+                | Operator::Le => (50, 51),
+                Operator::Add | Operator::Sub | Operator::Or => (100, 101),
+                Operator::Mul | Operator::Div | Operator::Rem | Operator::And => (150, 151),
+                _ => return None,
             },
             _ => return None,
         };
@@ -197,18 +209,17 @@ impl<'source> Parser<'source> {
             self.next_token()?;
             Ok(())
         } else {
-            Err(ParserError::UnexpectedToken {
-                span: self.token_span(),
+            Err(ParserErrorKind::UnexpectedToken {
                 expected: vec![ttype],
-            })
+            }.with_span(self.token_span()))
         }
     }
 
     fn next_token(&mut self) -> Result<Token<'source>, ParserError> {
         self.lexer
             .next()
-            .ok_or(ParserError::EndOfInput)?
-            .map_err(|_| ParserError::LexerError(self.lexer.span()))
+            .ok_or(ParserErrorKind::EndOfInput.with_span(self.token_span()))?
+            .map_err(|_| ParserErrorKind::LexerError.with_span(self.lexer.span()))
     }
 
     fn peek_token(&mut self) -> Result<&Token<'source>, ParserError> {
@@ -218,9 +229,9 @@ impl<'source> Parser<'source> {
 
         self.lexer
             .peek()
-            .ok_or(ParserError::EndOfInput)?
+            .ok_or(ParserErrorKind::EndOfInput.with_span(peeked_span.clone()))?
             .as_ref()
-            .map_err(|_| ParserError::LexerError(peeked_span))
+            .map_err(|_| ParserErrorKind::LexerError.with_span(peeked_span))
     }
 
     fn token_span(&self) -> Range<usize> {
