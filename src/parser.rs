@@ -36,6 +36,10 @@ impl<'source> Parser<'source> {
         Self { lexer }
     }
 
+    // pub fn block(&mut self) -> Result<Vec<Stmt>, Vec<ParserError>> {
+        
+    // }
+
     pub fn stmt(&mut self) -> Result<Stmt, ParserError> {
         if self.matches(TokenKind::Let)? {
             self.next_token()?;
