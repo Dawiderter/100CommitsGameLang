@@ -20,6 +20,7 @@ pub enum Expr {
     Binary(Operator, Box<Expr>, Box<Expr>),
     Unary(Operator, Box<Expr>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
+    Block(Vec<Stmt>),
     Variable(Var),
 }
 
@@ -67,6 +68,12 @@ impl Display for Expr {
                 } else {
                     write!(f, "if {c} then {t}")
                 }
+            },
+            Expr::Block(block) => {
+                for stmt in block {
+                    writeln!(f, "{}", stmt)?;
+                }
+                Ok(())
             },
         }
     }

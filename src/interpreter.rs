@@ -104,7 +104,7 @@ impl Interpreter {
                     Err(InterpreterError::MissingElse)
                 }
             },
-            
+            Expr::Block(_) => todo!(),
         }
     }
 }
