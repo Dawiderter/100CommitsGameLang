@@ -293,6 +293,7 @@ name = "game_lang"
 version = "0.1.0"
 dependencies = [
  "logos",
+ "owo-colors",
  "smol",
  "strum",
  "strum_macros",
@@ -354,6 +355,12 @@ checksum = "1c2a69b3eb68d5bd595107c9ee58d7e07fe2bb5e360cc85b0f084dedac80de0a"
 dependencies = [
  "logos-codegen",
 ]
+
+[[package]]
+name = "owo-colors"
+version = "4.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caff54706df99d2a78a5a4e3455ff45448d81ef1bb63c22cd14052ca0e993a3f"
 
 [[package]]
 name = "parking"
