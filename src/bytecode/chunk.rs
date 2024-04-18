@@ -57,6 +57,9 @@ pub struct LocalDissasembler<'code> {
 
 impl<'code> Display for LocalDissasembler<'code> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use owo_colors::OwoColorize;
+
+        write!(f, "{:04} ", self.offset.red())?;
         self.chunk.dissasemble_instruction(f, self.offset)?;
         Ok(())
     }
