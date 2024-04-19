@@ -1,5 +1,7 @@
 use std::{fmt::Display, ops::Range};
 
+use super::opcodes::*;
+
 use super::value::Value;
 
 /// An executable chunk of code
@@ -38,10 +40,6 @@ impl CodeChunk {
     }
 }
 
-// ===== Opcodes
-pub const OP_RETURN : u8 = 0;
-pub const OP_CONSTANT : u8 = 1;
-
 impl Default for CodeChunk {
     fn default() -> Self {
         Self::new()
@@ -49,21 +47,6 @@ impl Default for CodeChunk {
 }
 
 // ===== Disassembling
-#[derive(Debug)]
-pub struct LocalDissasembler<'code> {
-    chunk: &'code CodeChunk,
-    offset: usize,
-}
-
-impl<'code> Display for LocalDissasembler<'code> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use owo_colors::OwoColorize;
-
-        write!(f, "{:04} ", self.offset.red())?;
-        self.chunk.dissasemble_instruction(f, self.offset)?;
-        Ok(())
-    }
-}
 
 impl CodeChunk {
 
@@ -73,10 +56,24 @@ impl CodeChunk {
 
     #[rustfmt::skip]
     fn dissasemble_instruction(&self, f: &mut impl std::fmt::Write, offset: usize) -> Result<usize, std::fmt::Error> {
+        use owo_colors::OwoColorize;
+
         let instr = self.code[offset];
+        let (span_code_offset, span) = self.find_span_of(offset);
+        write!(f, "{:04} ", offset.red())?;
+        if *span_code_offset == offset {
+            write!(f, "{:>3}:{:<3} ", span.start, span.end)?;
+        } else {
+            write!(f, "{:^7} ", "|")?;
+        }
         let len = match instr {
             OP_RETURN => { self.dissasemble_op(f, "RETURN")?; 1 }
             OP_CONSTANT => { self.dissasemble_op(f, "CONSTANT")?; self.dissasemble_constant(f, offset + 1)?; 2 }
+            OP_NEG => { self.dissasemble_op(f, "NEG")?; 1 }
+            OP_ADD => { self.dissasemble_op(f, "ADD")?; 1 }
+            OP_SUB => { self.dissasemble_op(f, "SUB")?; 1 }
+            OP_MUL => { self.dissasemble_op(f, "MUL")?; 1 }
+            OP_DIV => { self.dissasemble_op(f, "DIV")?; 1 }
             _ => { self.dissasemble_op(f, "UNKNOWN")?; 1 }
         };
     
@@ -98,19 +95,8 @@ impl CodeChunk {
     }
 
     fn dissasemble_chunk(&self, f: &mut impl std::fmt::Write) -> Result<(), std::fmt::Error> {
-        use owo_colors::OwoColorize;
-
         let mut offset = 0;
-        let mut span_offset = 0;
         while offset < self.code.len() {
-            span_offset = self.next_span_offset(span_offset, offset);
-            let (span_code_offset, span) = &self.span_info[span_offset];
-            write!(f, "{:04} ", offset.red())?;
-            if *span_code_offset == offset {
-                write!(f, "{:>3}..{:<3} ", span.start, span.end)?;
-            } else {
-                write!(f, "{:^8} ", "|")?;
-            }
             let len = self.dissasemble_instruction(f, offset)?;
             writeln!(f)?;
             offset += len;
@@ -119,20 +105,40 @@ impl CodeChunk {
         Ok(())
     }
 
-    fn next_span_offset(&self, current_span: usize, current_offset: usize) -> usize {
-        let mut i = current_span;
-
-        while i < self.span_info.len() && self.span_info[i].0 <= current_offset {
-            i += 1;
-        }
-
-        i - 1
+    fn find_span_offset_of(&self, offset: usize) -> usize {
+        self.span_info.partition_point(|&(i,_)| i <= offset)
     }
+
+    fn find_span_of(&self, offset: usize) -> &(usize, Range<usize>) {
+        let span_offset = self.find_span_offset_of(offset);
+        &self.span_info[span_offset - 1]
+    }
+
+    // fn next_span_offset(&self, current_span: usize, current_offset: usize) -> usize {
+    //     let mut i = current_span;
+    //     while i < self.span_info.len() && self.span_info[i].0 <= current_offset {
+    //         i += 1;
+    //     }
+    //     i - 1
+    // }
 }
 
 impl Display for CodeChunk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.dissasemble_chunk(f)
+    }
+}
+
+#[derive(Debug)]
+pub struct LocalDissasembler<'code> {
+    chunk: &'code CodeChunk,
+    offset: usize,
+}
+
+impl<'code> Display for LocalDissasembler<'code> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.chunk.dissasemble_instruction(f, self.offset)?;
+        Ok(())
     }
 }
 

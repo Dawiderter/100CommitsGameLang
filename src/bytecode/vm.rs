@@ -2,7 +2,8 @@ use std::fmt::Display;
 
 use log::trace;
 
-use super::chunk::{CodeChunk, OP_CONSTANT, OP_RETURN};
+use super::chunk::CodeChunk;
+use super::opcodes::*;
 use super::value::Value;
 
 #[derive(Debug, Clone)]
@@ -24,11 +25,12 @@ pub enum RuntimeError {
     UnexpectedEnd,
     UnknownCode,
     ConstantNotFound,
+    EmptyStack,
 }
 
 impl<'code> VM<'code> {
     pub fn init(code: &'code CodeChunk) -> Self {
-        Self { code, stack: Vec::new(), pc: 0 }
+        Self { code, stack: Vec::with_capacity(256), pc: 0 }
     }
 
     pub fn run(&mut self) -> Result<(), RuntimeError> {
@@ -41,36 +43,69 @@ impl<'code> VM<'code> {
         }
     }
 
-    pub fn step(&mut self) -> Result<RuntimeStep, RuntimeError> {
-        trace!("{:4} {}", "", self.print_stack());
+    fn step(&mut self) -> Result<RuntimeStep, RuntimeError> {
+        macro_rules! bin_op {
+            ($op:ident) => {
+                {
+                    let b = self.stack_pop()?;
+                    let a = self.stack_pop()?;
+                    self.stack_push(a.$op(&b));
+                }
+            };
+        }
+
+        trace!("{:12} {}", "", self.print_stack());
         trace!("{}", self.code.dissasemble_at(self.pc));
 
         let op = self.read_byte()?;
 
         match op {
-            OP_RETURN => return Ok(RuntimeStep::Halt),
+            OP_RETURN => {
+                if let Some(value) = self.stack.pop() {
+                    eprintln!("Returned: {}", value);
+                } else {
+                    eprintln!("Empty stack");
+                }
+                return Ok(RuntimeStep::Halt);
+            },
             OP_CONSTANT => {
                 let value = self.read_constant()?.clone();
-                self.stack.push(value);
+                self.stack_push(value);
             }
+            OP_NEG => {
+                let value = self.stack_pop()?.neg();
+                self.stack_push(value)
+            }
+            OP_ADD => bin_op!(add),
+            OP_SUB => bin_op!(sub),
+            OP_MUL => bin_op!(mul),
+            OP_DIV => bin_op!(div),
             _ => return Err(RuntimeError::UnknownCode),
         }
 
         Ok(RuntimeStep::KeepGoing)
     }
 
-    pub fn read_byte(&mut self) -> Result<u8, RuntimeError> {
+    fn read_byte(&mut self) -> Result<u8, RuntimeError> {
         self.pc += 1;
         self.code
             .get_byte(self.pc - 1)
             .ok_or(RuntimeError::UnexpectedEnd)
     }
 
-    pub fn read_constant(&mut self) -> Result<&'code Value, RuntimeError> {
+    fn read_constant(&mut self) -> Result<&'code Value, RuntimeError> {
         let constant_offset = self.read_byte()?;
         self.code
             .get_constant(constant_offset as usize)
             .ok_or(RuntimeError::ConstantNotFound)
+    }
+
+    fn stack_pop(&mut self) -> Result<Value, RuntimeError> {
+        self.stack.pop().ok_or(RuntimeError::EmptyStack)
+    }
+
+    fn stack_push(&mut self, value: Value) {
+        self.stack.push(value);
     }
 }
 
@@ -79,7 +114,7 @@ impl<'code> VM<'code> {
     fn write_stack(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
         use owo_colors::OwoColorize;
 
-        write!(f,"[")?;
+        write!(f,"└→[")?;
         let mut stack_iter = self.stack.iter();
         if let Some(first_val) = stack_iter.next() {
             write!(f, "{}", first_val.blue())?;
@@ -113,27 +148,37 @@ mod tests {
 
     fn init_logger() {
         let _ = env_logger::builder()
-            // Include all events in tests
             .filter_level(log::LevelFilter::Trace)
-            // Ensure events are captured by `cargo test`
+            .format_timestamp(None)
             .is_test(true)
-            // Ignore errors initializing the logger if tests race to configure it
             .try_init();
     }
 
     #[test]
-    fn test() {
+    fn vm_test() {
         init_logger();
 
         let mut chunk = CodeChunk::new();
         chunk.push_span_info(0..10);
-        let constant1 = chunk.push_constant(Value::Number(1.2));
-        let constant2 = chunk.push_constant(Value::Number(10.0));
+        let constant = chunk.push_constant(Value::Number(1.2));
         chunk.push_code(OP_CONSTANT);
-        chunk.push_code(constant1);
+        chunk.push_code(constant);
+
+        let constant = chunk.push_constant(Value::Number(3.4));
         chunk.push_code(OP_CONSTANT);
-        chunk.push_code(constant2);
+        chunk.push_code(constant);
+
+        chunk.push_code(OP_ADD);
+
         chunk.push_span_info(10..20);
+
+        let constant = chunk.push_constant(Value::Number(5.6));
+        chunk.push_code(OP_CONSTANT);
+        chunk.push_code(constant);
+
+        chunk.push_code(OP_DIV);
+        chunk.push_code(OP_NEG);
+
         chunk.push_code(OP_RETURN);
 
         let mut vm = VM::init(&chunk);
