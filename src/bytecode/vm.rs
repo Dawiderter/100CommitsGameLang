@@ -26,6 +26,7 @@ pub enum RuntimeError {
     UnknownCode,
     ConstantNotFound,
     EmptyStack,
+    UnsupportedOp
 }
 
 impl<'code> VM<'code> {
@@ -47,9 +48,16 @@ impl<'code> VM<'code> {
         macro_rules! bin_op {
             ($op:ident) => {
                 {
-                    let b = self.stack_pop()?;
-                    let a = self.stack_pop()?;
-                    self.stack_push(a.$op(&b));
+                    let b = self.stack_peek(0)?;
+                    let a = self.stack_peek(1)?;
+                    match a.$op(b) {
+                        Some(value) => {
+                            self.stack_pop()?;
+                            self.stack_pop()?;
+                            self.stack_push(value);
+                        }
+                        None => return Err(RuntimeError::UnsupportedOp),
+                    }
                 }
             };
         }
@@ -73,8 +81,14 @@ impl<'code> VM<'code> {
                 self.stack_push(value);
             }
             OP_NEG => {
-                let value = self.stack_pop()?.neg();
-                self.stack_push(value)
+                let value = self.stack_peek(0)?.neg();
+                match value {
+                    Some(value) => {
+                        self.stack_pop()?;
+                        self.stack_push(value);
+                    },
+                    None => return Err(RuntimeError::UnsupportedOp),
+                }
             }
             OP_ADD => bin_op!(add),
             OP_SUB => bin_op!(sub),
@@ -102,6 +116,10 @@ impl<'code> VM<'code> {
 
     fn stack_pop(&mut self) -> Result<Value, RuntimeError> {
         self.stack.pop().ok_or(RuntimeError::EmptyStack)
+    }
+
+    fn stack_peek(&self, dist: usize) -> Result<&Value, RuntimeError> {
+        self.stack.get(self.stack.len() - 1 - dist).ok_or(RuntimeError::EmptyStack)
     }
 
     fn stack_push(&mut self, value: Value) {
