@@ -1,15 +1,19 @@
 use std::fmt::Display;
+use std::ops::Range;
 
 use log::trace;
+use slotmap::SlotMap;
 
 use super::chunk::CodeChunk;
+use super::object::ObjectHeap;
 use super::opcodes::*;
 use super::value::Value;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VM<'code> {
     code: &'code CodeChunk,
     stack: Vec<Value>,
+    heap: ObjectHeap,
     pc: usize,
 }
 
@@ -31,9 +35,9 @@ pub enum RuntimeError {
 
 impl<'code> VM<'code> {
     pub fn init(code: &'code CodeChunk) -> Self {
-        Self { code, stack: Vec::with_capacity(256), pc: 0 }
+        Self { code, stack: Vec::with_capacity(256), heap: ObjectHeap::with_key(), pc: 0 }
     }
-
+    
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
             match self.step() {
@@ -42,6 +46,10 @@ impl<'code> VM<'code> {
                 Ok(RuntimeStep::KeepGoing) => {}
             }
         }
+    }
+
+    pub fn current_span(&self) -> Range<usize> {
+        self.code.find_span_of(self.pc - 1).1.clone()
     }
 
     fn step(&mut self) -> Result<RuntimeStep, RuntimeError> {
@@ -56,6 +64,21 @@ impl<'code> VM<'code> {
                             self.stack_pop()?;
                             self.stack_push(value);
                         }
+                        None => return Err(RuntimeError::UnsupportedOp),
+                    }
+                }
+            };
+        }
+
+        macro_rules! un_op {
+            ($op:ident) => {
+                {
+                    let value = self.stack_peek(0)?.$op();
+                    match value {
+                        Some(value) => {
+                            self.stack_pop()?;
+                            self.stack_push(value);
+                        },
                         None => return Err(RuntimeError::UnsupportedOp),
                     }
                 }
@@ -80,20 +103,20 @@ impl<'code> VM<'code> {
                 let value = self.read_constant()?.clone();
                 self.stack_push(value);
             }
-            OP_NEG => {
-                let value = self.stack_peek(0)?.neg();
-                match value {
-                    Some(value) => {
-                        self.stack_pop()?;
-                        self.stack_push(value);
-                    },
-                    None => return Err(RuntimeError::UnsupportedOp),
-                }
-            }
+            OP_TRUE => self.stack_push(Value::Bool(true)),
+            OP_FALSE => self.stack_push(Value::Bool(false)),
+            OP_NIL => self.stack_push(Value::Nil),
+            OP_NEG => un_op!(neg),
+            OP_NOT => un_op!(not),
+            OP_AND => bin_op!(and),
+            OP_OR => bin_op!(or),
             OP_ADD => bin_op!(add),
             OP_SUB => bin_op!(sub),
             OP_MUL => bin_op!(mul),
             OP_DIV => bin_op!(div),
+            OP_EQUAL => bin_op!(equal),
+            OP_LESS => bin_op!(less),
+            OP_GREATER => bin_op!(greater),
             _ => return Err(RuntimeError::UnknownCode),
         }
 

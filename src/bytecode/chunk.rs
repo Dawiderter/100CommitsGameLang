@@ -74,6 +74,15 @@ impl CodeChunk {
             OP_SUB => { self.dissasemble_op(f, "SUB")?; 1 }
             OP_MUL => { self.dissasemble_op(f, "MUL")?; 1 }
             OP_DIV => { self.dissasemble_op(f, "DIV")?; 1 }
+            OP_NOT => { self.dissasemble_op(f, "NOT")?; 1 }
+            OP_AND => { self.dissasemble_op(f, "AND")?; 1 }
+            OP_OR => { self.dissasemble_op(f, "OR")?; 1 }
+            OP_EQUAL => { self.dissasemble_op(f, "EQUAL")?; 1 }
+            OP_GREATER => { self.dissasemble_op(f, "GREATER")?; 1 }
+            OP_LESS => { self.dissasemble_op(f, "LESS")?; 1 }
+            OP_TRUE => { self.dissasemble_op(f, "TRUE")?; 1 }
+            OP_FALSE => { self.dissasemble_op(f, "FALSE")?; 1 }
+            OP_NIL => { self.dissasemble_op(f, "NIL")?; 1 }
             _ => { self.dissasemble_op(f, "UNKNOWN")?; 1 }
         };
     
@@ -109,7 +118,7 @@ impl CodeChunk {
         self.span_info.partition_point(|&(i,_)| i <= offset)
     }
 
-    fn find_span_of(&self, offset: usize) -> &(usize, Range<usize>) {
+    pub fn find_span_of(&self, offset: usize) -> &(usize, Range<usize>) {
         let span_offset = self.find_span_offset_of(offset);
         &self.span_info[span_offset - 1]
     }

@@ -19,13 +19,19 @@ pub struct ParsingError {
 }
 
 impl<'source, 'code> Parser<'source, 'code> {
-    pub fn parse_source(source: &'source str, code: &'code mut CodeChunk) {
+    pub fn parse_source(source: &'source str, code: &'code mut CodeChunk) -> Result<(), Vec<ParsingError>> {
         
         let mut parser = Self { lexer: Lexer::lex(source), code };
 
-        parser.expression().unwrap();
-        parser.consume(None).unwrap();
+        if let Err(err) = parser.expression() {
+            return Err(vec![err]);
+        }
+        if let Err(err) = parser.consume(None) {
+            return Err(vec![err]);
+        }
         parser.code.push_code(OP_RETURN);
+
+        Ok(())
     }
 
     fn expression(&mut self) -> Result<(), ParsingError> {
@@ -43,13 +49,31 @@ impl<'source, 'code> Parser<'source, 'code> {
             Token::Number => {
                 self.number();
             }
+            Token::False => {
+                self.lexer.next();
+                self.code.push_span_info(self.lexer.span());
+                self.code.push_code(OP_FALSE)
+            }
+            Token::True => {
+                self.lexer.next();
+                self.code.push_span_info(self.lexer.span());
+                self.code.push_code(OP_TRUE)
+            }
+            Token::Nil => {
+                self.lexer.next();
+                self.code.push_span_info(self.lexer.span());
+                self.code.push_code(OP_NIL)
+            }
             prefix_token => {
                 match Self::prefix_bp(prefix_token) {
                     Some((_, r_bp)) => {
+                        let op_span = self.lexer.span();
                         self.lexer.next();
                         self.expression_bp(r_bp)?;
+                        self.code.push_span_info(op_span);
                         match prefix_token {
                             Token::Sub => self.code.push_code(OP_NEG),
+                            Token::Not => self.code.push_code(OP_NOT),
                             _ => { warn!("Unsupported token parsed as prefix operator: {:?}", op) }
                         }
                     },
@@ -74,6 +98,14 @@ impl<'source, 'code> Parser<'source, 'code> {
                         Token::Sub => self.code.push_code(OP_SUB),
                         Token::Mul => self.code.push_code(OP_MUL),
                         Token::Div => self.code.push_code(OP_DIV),
+                        Token::Eq => self.code.push_code(OP_EQUAL),
+                        Token::Neq => { self.code.push_code(OP_EQUAL); self.code.push_code(OP_NOT) }
+                        Token::Gr => self.code.push_code(OP_GREATER),
+                        Token::Le => self.code.push_code(OP_LESS),
+                        Token::Geq => { self.code.push_code(OP_LESS); self.code.push_code(OP_NOT) },
+                        Token::Leq => { self.code.push_code(OP_GREATER); self.code.push_code(OP_NOT) },
+                        Token::And => self.code.push_code(OP_AND), 
+                        Token::Or => self.code.push_code(OP_OR), 
                         _ => { warn!("Unsupported token parsed as infix operator: {:?}", op) }
                     }
                 },
@@ -93,8 +125,11 @@ impl<'source, 'code> Parser<'source, 'code> {
 
     fn infix_bp(token: Token) -> Option<(u8, u8)> {
         let bp = match token {
-            Token::Add | Token::Sub => (1, 2),
-            Token::Mul | Token::Div => (3, 4),
+            Token::Or => (1, 2),
+            Token::And => (3, 4),
+            Token::Eq | Token::Neq | Token::Geq | Token::Leq | Token::Le | Token::Gr => (5, 6),
+            Token::Add | Token::Sub => (7, 8),
+            Token::Mul | Token::Div => (9, 10),
             _ => return None,
         };
         Some(bp)
@@ -102,7 +137,8 @@ impl<'source, 'code> Parser<'source, 'code> {
 
     fn prefix_bp(token: Token) -> Option<((), u8)> {
         let bp = match token {
-            Token::Sub => ((), 5),
+            Token::Sub => ((), 11),
+            Token::Not => ((), 11),
             _ => return None,
         };
         Some(bp)
@@ -160,7 +196,7 @@ mod tests {
 
         let test_str = "(1 + 5) - - - (8 - 2)";
         let mut code = CodeChunk::new();
-        Parser::parse_source(test_str, &mut code);
+        Parser::parse_source(test_str, &mut code).unwrap();
         eprintln!("{}", code);
 
         VM::init(&code).run().unwrap();
