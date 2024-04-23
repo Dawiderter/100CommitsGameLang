@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use game_lang::{bytecode::{chunk::CodeChunk, vm::VM}, cli::reporter::{report_parsing_error, report_runtime_error}, compiler::parser::Parser};
+use game_lang::{bytecode::{chunk::CodeChunk, object::ObjectHeap, vm::VM}, cli::reporter::{report_parsing_error, report_runtime_error}, compiler::parser::Parser};
 
 #[derive(clap::Parser)]
 struct Args {
@@ -29,13 +29,15 @@ fn file(input_path: &Path) {
     let input = std::fs::read_to_string(input_path).unwrap();
     let name = input_path.to_string_lossy();
     let mut code = CodeChunk::new();
-    if let Err(errors) = Parser::parse_source(&input, &mut code) {
+    let mut heap = ObjectHeap::new();
+
+    if let Err(errors) = Parser::parse_source(&input, &mut code, &mut heap) {
         for err in errors {
             report_parsing_error(&name, &input, err);
         }
         return;
     }
-    let mut vm = VM::init(&code);
+    let mut vm = VM::init(&code, &mut heap);
     if let Err(err) = vm.run() {
         report_runtime_error(&name, &input, err, vm.current_span())
     }
@@ -44,6 +46,8 @@ fn file(input_path: &Path) {
 fn repl() {
     let mut rl = rustyline::DefaultEditor::new().unwrap();
 
+    let mut heap = ObjectHeap::new();
+
     loop {
         let line = match rl.readline(">> "){
             Ok(line) => line,
@@ -51,14 +55,14 @@ fn repl() {
         };
 
         let mut code = CodeChunk::new();
-        if let Err(errors) = Parser::parse_source(&line, &mut code) {
+        if let Err(errors) = Parser::parse_source(&line, &mut code, &mut heap) {
             for err in errors {
                 report_parsing_error("REPL", &line, err);
             }
             continue;
         }
 
-        let mut vm = VM::init(&code);
+        let mut vm = VM::init(&code, &mut heap);
         if let Err(err) = vm.run() {
             report_runtime_error("REPL", &line, err, vm.current_span())
         }

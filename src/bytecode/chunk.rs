@@ -1,5 +1,6 @@
 use std::{fmt::Display, ops::Range};
 
+use super::object::ObjectHeap;
 use super::opcodes::*;
 
 use super::value::Value;
@@ -49,17 +50,56 @@ impl Default for CodeChunk {
 // ===== Disassembling
 
 impl CodeChunk {
-
-    pub fn dissasemble_at(&self, offset: usize) -> LocalDissasembler<'_> {
-        LocalDissasembler { chunk: self, offset }
+    pub fn dissasemble(&self) -> Dissasembler<'_,'_> {
+        Dissasembler { chunk: self, offset: None, heap: None }
     }
 
+    fn find_span_offset_of(&self, offset: usize) -> usize {
+        self.span_info.partition_point(|&(i,_)| i <= offset)
+    }
+
+    pub fn find_span_of(&self, offset: usize) -> &(usize, Range<usize>) {
+        let span_offset = self.find_span_offset_of(offset);
+        &self.span_info[span_offset - 1]
+    }
+
+    // fn next_span_offset(&self, current_span: usize, current_offset: usize) -> usize {
+    //     let mut i = current_span;
+    //     while i < self.span_info.len() && self.span_info[i].0 <= current_offset {
+    //         i += 1;
+    //     }
+    //     i - 1
+    // }
+}
+
+impl Display for CodeChunk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.dissasemble())
+    }
+}
+
+#[derive(Debug)]
+pub struct Dissasembler<'code, 'heap> {
+    chunk: &'code CodeChunk,
+    offset: Option<usize>,
+    heap: Option<&'heap ObjectHeap>
+}
+
+impl<'code, 'heap> Dissasembler<'code, 'heap> {
+    pub fn at(mut self, offset: usize) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+    pub fn with_heap(mut self, heap: &'heap ObjectHeap) -> Self {
+        self.heap = Some(heap);
+        self
+    }
     #[rustfmt::skip]
     fn dissasemble_instruction(&self, f: &mut impl std::fmt::Write, offset: usize) -> Result<usize, std::fmt::Error> {
         use owo_colors::OwoColorize;
 
-        let instr = self.code[offset];
-        let (span_code_offset, span) = self.find_span_of(offset);
+        let instr = self.chunk.code[offset];
+        let (span_code_offset, span) = self.chunk.find_span_of(offset);
         write!(f, "{:04} ", offset.red())?;
         if *span_code_offset == offset {
             write!(f, "{:>3}:{:<3} ", span.start, span.end)?;
@@ -83,6 +123,9 @@ impl CodeChunk {
             OP_TRUE => { self.dissasemble_op(f, "TRUE")?; 1 }
             OP_FALSE => { self.dissasemble_op(f, "FALSE")?; 1 }
             OP_NIL => { self.dissasemble_op(f, "NIL")?; 1 }
+            OP_PRINT => { self.dissasemble_op(f, "PRINT")?; 1 }
+            OP_POP => { self.dissasemble_op(f, "POP")?; 1 }
+            OP_DEF_GLOBAL => { self.dissasemble_op(f, "DEF GLOBAL")?; self.dissasemble_constant(f, offset + 1)?; 2 }
             _ => { self.dissasemble_op(f, "UNKNOWN")?; 1 }
         };
     
@@ -98,14 +141,17 @@ impl CodeChunk {
     fn dissasemble_constant(&self, f: &mut impl std::fmt::Write, offset: usize) -> Result<(), std::fmt::Error> {
         use owo_colors::OwoColorize;
 
-        let constant = self.code[offset];
-        let constant_value = &self.constants[constant as usize];
-        write!(f, " {:>3} '{}'", constant.green(), constant_value.green().bold())
+        let constant = self.chunk.code[offset];
+        let constant_value = &self.chunk.constants[constant as usize];
+        match self.heap {
+            Some(heap) => write!(f, " {:>3} '{}'", constant.green(), constant_value.print_with_heap(heap).green().bold()),
+            None => write!(f, " {:>3} '{}'", constant.green(), constant_value.green().bold()),
+        }
     }
 
     fn dissasemble_chunk(&self, f: &mut impl std::fmt::Write) -> Result<(), std::fmt::Error> {
         let mut offset = 0;
-        while offset < self.code.len() {
+        while offset < self.chunk.code.len() {
             let len = self.dissasemble_instruction(f, offset)?;
             writeln!(f)?;
             offset += len;
@@ -113,40 +159,14 @@ impl CodeChunk {
     
         Ok(())
     }
-
-    fn find_span_offset_of(&self, offset: usize) -> usize {
-        self.span_info.partition_point(|&(i,_)| i <= offset)
-    }
-
-    pub fn find_span_of(&self, offset: usize) -> &(usize, Range<usize>) {
-        let span_offset = self.find_span_offset_of(offset);
-        &self.span_info[span_offset - 1]
-    }
-
-    // fn next_span_offset(&self, current_span: usize, current_offset: usize) -> usize {
-    //     let mut i = current_span;
-    //     while i < self.span_info.len() && self.span_info[i].0 <= current_offset {
-    //         i += 1;
-    //     }
-    //     i - 1
-    // }
 }
 
-impl Display for CodeChunk {
+impl<'code,'heap> Display for Dissasembler<'code, 'heap> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.dissasemble_chunk(f)
-    }
-}
-
-#[derive(Debug)]
-pub struct LocalDissasembler<'code> {
-    chunk: &'code CodeChunk,
-    offset: usize,
-}
-
-impl<'code> Display for LocalDissasembler<'code> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.chunk.dissasemble_instruction(f, self.offset)?;
+        match self.offset {
+            Some(offset) => { self.dissasemble_instruction(f, offset)?; },
+            None => { self.dissasemble_chunk(f)?; },
+        };
         Ok(())
     }
 }

@@ -18,6 +18,7 @@ pub enum Token {
     #[token("for")] For, #[token("while")] While,
     #[token("return")] Return, #[token("fn")] Fn, 
     #[token("class")] Class, #[token("super")] Super, #[token("this")] This,
+    #[token("print")] Print,
     #[token("=")] Assign,
     #[token("+")] Add, #[token("-")] Sub,
     #[token("*")] Mul, #[token("/")] Div, #[token("%")] Rem, 
@@ -31,7 +32,6 @@ pub enum Token {
     #[token("true")] True, #[token("false")] False,
     #[token("nil")] Nil,
     Error,
-    EOI,
 }
 
 impl<'source> Lexer<'source> {

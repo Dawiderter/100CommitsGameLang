@@ -15,3 +15,6 @@ pub const OP_EQUAL : u8 = 12;
 pub const OP_GREATER : u8 = 13;
 pub const OP_LESS : u8 = 14;
 pub const OP_NIL : u8 = 15;
+pub const OP_PRINT : u8 = 16;
+pub const OP_POP : u8 = 17;
+pub const OP_DEF_GLOBAL : u8 = 18;

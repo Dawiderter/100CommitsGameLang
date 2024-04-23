@@ -2,7 +2,6 @@ use std::fmt::Display;
 use std::ops::Range;
 
 use log::trace;
-use slotmap::SlotMap;
 
 use super::chunk::CodeChunk;
 use super::object::ObjectHeap;
@@ -10,10 +9,10 @@ use super::opcodes::*;
 use super::value::Value;
 
 #[derive(Debug)]
-pub struct VM<'code> {
+pub struct VM<'code, 'heap> {
     code: &'code CodeChunk,
-    stack: Vec<Value>,
-    heap: ObjectHeap,
+    heap: &'heap mut ObjectHeap,
+    stack: Stack,
     pc: usize,
 }
 
@@ -30,14 +29,19 @@ pub enum RuntimeError {
     UnknownCode,
     ConstantNotFound,
     EmptyStack,
-    UnsupportedOp
+    UnsupportedOp,
 }
 
-impl<'code> VM<'code> {
-    pub fn init(code: &'code CodeChunk) -> Self {
-        Self { code, stack: Vec::with_capacity(256), heap: ObjectHeap::with_key(), pc: 0 }
+impl<'code, 'heap> VM<'code, 'heap> {
+    pub fn init(code: &'code CodeChunk, heap: &'heap mut ObjectHeap) -> Self {
+        Self {
+            code,
+            stack: Stack::with_capacity(256),
+            heap,
+            pc: 0,
+        }
     }
-    
+
     pub fn run(&mut self) -> Result<(), RuntimeError> {
         loop {
             match self.step() {
@@ -54,58 +58,68 @@ impl<'code> VM<'code> {
 
     fn step(&mut self) -> Result<RuntimeStep, RuntimeError> {
         macro_rules! bin_op {
-            ($op:ident) => {
-                {
-                    let b = self.stack_peek(0)?;
-                    let a = self.stack_peek(1)?;
-                    match a.$op(b) {
-                        Some(value) => {
-                            self.stack_pop()?;
-                            self.stack_pop()?;
-                            self.stack_push(value);
-                        }
-                        None => return Err(RuntimeError::UnsupportedOp),
+            ($op:ident) => {{
+                let b = self.stack.peek(0)?;
+                let a = self.stack.peek(1)?;
+                match a.$op(b, self.heap) {
+                    Some(value) => {
+                        self.stack.pop()?;
+                        self.stack.pop()?;
+                        self.stack.push(value);
                     }
+                    None => return Err(RuntimeError::UnsupportedOp),
                 }
-            };
+            }};
         }
 
         macro_rules! un_op {
-            ($op:ident) => {
-                {
-                    let value = self.stack_peek(0)?.$op();
-                    match value {
-                        Some(value) => {
-                            self.stack_pop()?;
-                            self.stack_push(value);
-                        },
-                        None => return Err(RuntimeError::UnsupportedOp),
+            ($op:ident) => {{
+                let value = self.stack.peek(0)?.$op(self.heap);
+                match value {
+                    Some(value) => {
+                        self.stack.pop()?;
+                        self.stack.push(value);
                     }
+                    None => return Err(RuntimeError::UnsupportedOp),
                 }
-            };
+            }};
         }
 
-        trace!("{:12} {}", "", self.print_stack());
-        trace!("{}", self.code.dissasemble_at(self.pc));
+        use owo_colors::OwoColorize;
+
+        trace!(
+            "{:12} L:{} M:{}{} S:{}",
+            "",
+            self.heap.live_count().blue().bold(),
+            self.heap.dynamic_memory_used().blue().bold(),
+            "B".blue().bold(),
+            self.stack.print_stack_with_heap(self.heap)
+        );
+        trace!(
+            "{}",
+            self.code.dissasemble().at(self.pc).with_heap(self.heap)
+        );
 
         let op = self.read_byte()?;
 
         match op {
             OP_RETURN => {
-                if let Some(value) = self.stack.pop() {
-                    eprintln!("Returned: {}", value);
-                } else {
-                    eprintln!("Empty stack");
-                }
                 return Ok(RuntimeStep::Halt);
-            },
+            }
+            OP_PRINT => {
+                let value = self.stack.pop()?;
+                println!("{}", value.print_with_heap(self.heap));
+            }
             OP_CONSTANT => {
                 let value = self.read_constant()?.clone();
-                self.stack_push(value);
+                self.stack.push(value);
             }
-            OP_TRUE => self.stack_push(Value::Bool(true)),
-            OP_FALSE => self.stack_push(Value::Bool(false)),
-            OP_NIL => self.stack_push(Value::Nil),
+            OP_POP => {
+                self.stack.pop()?;
+            }
+            OP_TRUE => self.stack.push(Value::Bool(true)),
+            OP_FALSE => self.stack.push(Value::Bool(false)),
+            OP_NIL => self.stack.push(Value::Nil),
             OP_NEG => un_op!(neg),
             OP_NOT => un_op!(not),
             OP_AND => bin_op!(and),
@@ -136,50 +150,68 @@ impl<'code> VM<'code> {
             .get_constant(constant_offset as usize)
             .ok_or(RuntimeError::ConstantNotFound)
     }
+}
 
-    fn stack_pop(&mut self) -> Result<Value, RuntimeError> {
+#[derive(Debug, Clone)]
+struct Stack {
+    stack: Vec<Value>,
+}
+
+impl Stack {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            stack: Vec::with_capacity(capacity),
+        }
+    }
+
+    fn pop(&mut self) -> Result<Value, RuntimeError> {
         self.stack.pop().ok_or(RuntimeError::EmptyStack)
     }
 
-    fn stack_peek(&self, dist: usize) -> Result<&Value, RuntimeError> {
-        self.stack.get(self.stack.len() - 1 - dist).ok_or(RuntimeError::EmptyStack)
+    fn peek(&self, dist: usize) -> Result<&Value, RuntimeError> {
+        self.stack
+            .get(self.stack.len() - 1 - dist)
+            .ok_or(RuntimeError::EmptyStack)
     }
 
-    fn stack_push(&mut self, value: Value) {
+    fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
-}
 
-// Execution Tracing =====
-impl<'code> VM<'code> {
-    fn write_stack(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
-        use owo_colors::OwoColorize;
-
-        write!(f,"└→[")?;
-        let mut stack_iter = self.stack.iter();
-        if let Some(first_val) = stack_iter.next() {
-            write!(f, "{}", first_val.blue())?;
-        }
-        for val in stack_iter {
-            write!(f, ", {}", val.blue())?;
-        }
-        write!(f, "]")?;
-        Ok(())
-    }
-
-    fn print_stack(&self) -> StackPrinter<'_,'code> {
-        StackPrinter { vm: self }
+    fn print_stack_with_heap<'stack, 'heap>(
+        &'stack self,
+        heap: &'heap ObjectHeap,
+    ) -> StackPrinter<'stack, 'heap> {
+        StackPrinter { stack: self, heap }
     }
 }
 
 #[derive(Debug)]
-pub struct StackPrinter<'vm, 'code> {
-    vm: &'vm VM<'code>, 
+pub struct StackPrinter<'stack, 'heap> {
+    stack: &'stack Stack,
+    heap: &'heap ObjectHeap,
 }
 
-impl<'vm, 'code> Display for StackPrinter<'vm, 'code> {
+impl<'stack, 'heap> StackPrinter<'stack, 'heap> {
+    fn write_stack(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        use owo_colors::OwoColorize;
+
+        write!(f, "[")?;
+        let mut stack_iter = self.stack.stack.iter();
+        if let Some(first_val) = stack_iter.next() {
+            write!(f, "'{}'", first_val.print_with_heap(self.heap).blue())?;
+        }
+        for val in stack_iter {
+            write!(f, ", '{}'", val.print_with_heap(self.heap).blue())?;
+        }
+        write!(f, "]")?;
+        Ok(())
+    }
+}
+
+impl<'stack, 'heap> Display for StackPrinter<'stack, 'heap> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.vm.write_stack(f)
+        self.write_stack(f)
     }
 }
 
@@ -222,7 +254,8 @@ mod tests {
 
         chunk.push_code(OP_RETURN);
 
-        let mut vm = VM::init(&chunk);
+        let mut heap = ObjectHeap::new();
+        let mut vm = VM::init(&chunk, &mut heap);
 
         let res = vm.run();
         eprintln!("{:?}", res);
