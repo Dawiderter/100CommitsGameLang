@@ -4,9 +4,9 @@ use std::ops::Range;
 use log::trace;
 
 use super::chunk::CodeChunk;
-use super::object::ObjectHeap;
+use super::object::{HeapError, ObjectHeap};
 use super::opcodes::*;
-use super::value::Value;
+use super::value::{Value, ValueError};
 
 #[derive(Debug)]
 pub struct VM<'code, 'heap> {
@@ -28,8 +28,10 @@ pub enum RuntimeError {
     UnexpectedEnd,
     UnknownCode,
     ConstantNotFound,
+    ConstantNotIdentifier,
     EmptyStack,
-    UnsupportedOp,
+    HeapError(HeapError),
+    ValueError(ValueError),
 }
 
 impl<'code, 'heap> VM<'code, 'heap> {
@@ -59,48 +61,38 @@ impl<'code, 'heap> VM<'code, 'heap> {
     fn step(&mut self) -> Result<RuntimeStep, RuntimeError> {
         macro_rules! bin_op {
             ($op:ident) => {{
-                let b = self.stack.peek(0)?;
-                let a = self.stack.peek(1)?;
-                match a.$op(b, self.heap) {
-                    Some(value) => {
-                        self.stack.pop()?;
-                        self.stack.pop()?;
-                        self.stack.push(value);
-                    }
-                    None => return Err(RuntimeError::UnsupportedOp),
-                }
+                let b = self.stack.pop()?;
+                let a = self.stack.pop()?;
+                let value = a.$op(&b, self.heap)?;
+                self.stack.push(value);
             }};
         }
 
         macro_rules! un_op {
             ($op:ident) => {{
-                let value = self.stack.peek(0)?.$op(self.heap);
-                match value {
-                    Some(value) => {
-                        self.stack.pop()?;
-                        self.stack.push(value);
-                    }
-                    None => return Err(RuntimeError::UnsupportedOp),
-                }
+                let value = self.stack.pop()?.$op(self.heap)?;
+                self.stack.push(value);
             }};
         }
+        
+        {
+            use owo_colors::OwoColorize;
 
-        use owo_colors::OwoColorize;
+            trace!(
+                "{:12} L:{} M:{}{} S:{}",
+                "",
+                self.heap.live_count().blue().bold(),
+                self.heap.dynamic_memory_used().blue().bold(),
+                "B".blue().bold(),
+                self.stack.print_stack_with_heap(self.heap)
+            );
+            trace!(
+                "{}",
+                self.code.dissasemble().at(self.pc).with_heap(self.heap)
+            );
+        }
 
-        trace!(
-            "{:12} L:{} M:{}{} S:{}",
-            "",
-            self.heap.live_count().blue().bold(),
-            self.heap.dynamic_memory_used().blue().bold(),
-            "B".blue().bold(),
-            self.stack.print_stack_with_heap(self.heap)
-        );
-        trace!(
-            "{}",
-            self.code.dissasemble().at(self.pc).with_heap(self.heap)
-        );
-
-        let op = self.read_byte()?;
+        let op = self.read_u8()?;
 
         match op {
             OP_RETURN => {
@@ -111,11 +103,50 @@ impl<'code, 'heap> VM<'code, 'heap> {
                 println!("{}", value.print_with_heap(self.heap));
             }
             OP_CONSTANT => {
-                let value = self.read_constant()?.clone();
+                let value = self.read_constant()?;
                 self.stack.push(value);
             }
             OP_POP => {
                 self.stack.pop()?;
+            }
+            OP_DEF_GLOBAL => {
+                let ident_value = self.read_constant()?;
+                let Value::Object(ident) = ident_value else { return Err(RuntimeError::ConstantNotIdentifier) };
+                let variable = self.stack.pop()?;
+                self.heap.put_as_global(ident, variable);
+            }
+            OP_GET_GLOBAL => {
+                let ident_value = self.read_constant()?;
+                let Value::Object(ident) = ident_value else { return Err(RuntimeError::ConstantNotIdentifier) };
+                let val = self.heap.get_global(ident)?;
+                self.stack.push(val);
+            }
+            OP_SET_GLOBAL => {
+                let ident_value = self.read_constant()?;
+                let Value::Object(ident) = ident_value else { return Err(RuntimeError::ConstantNotIdentifier) };
+                self.heap.get_global(ident)?;
+                self.heap.put_as_global(ident, *self.stack.peek(0)?);
+            }
+            OP_GET_LOCAL => {
+                let idx = self.read_u8()?;
+                let local = self.stack.get_at(idx as usize)?;
+                self.stack.push(*local);
+            }
+            OP_SET_LOCAL => {
+                let idx = self.read_u8()?;
+                let set = self.stack.peek(0)?;
+                self.stack.set_at(idx as usize, *set)?;
+            }
+            OP_JUMP => {
+                let pos = self.read_u16()?;
+                self.pc += pos as usize;
+            }
+            OP_JUMP_F => {
+                let pos = self.read_u16()?;
+                let value = self.stack.peek(0)?;
+                if value.is_falsey() {
+                    self.pc += pos as usize;
+                }
             }
             OP_TRUE => self.stack.push(Value::Bool(true)),
             OP_FALSE => self.stack.push(Value::Bool(false)),
@@ -137,18 +168,30 @@ impl<'code, 'heap> VM<'code, 'heap> {
         Ok(RuntimeStep::KeepGoing)
     }
 
-    fn read_byte(&mut self) -> Result<u8, RuntimeError> {
+    fn read_u8(&mut self) -> Result<u8, RuntimeError> {
         self.pc += 1;
         self.code
             .get_byte(self.pc - 1)
             .ok_or(RuntimeError::UnexpectedEnd)
     }
 
-    fn read_constant(&mut self) -> Result<&'code Value, RuntimeError> {
-        let constant_offset = self.read_byte()?;
+    fn read_u16(&mut self) -> Result<u16, RuntimeError> {
+        self.pc += 2;
+        let big = self.code
+            .get_byte(self.pc - 2)
+            .ok_or(RuntimeError::UnexpectedEnd)?;
+        let little = self.code
+            .get_byte(self.pc - 1)
+            .ok_or(RuntimeError::UnexpectedEnd)?;
+        Ok(u16::from_be_bytes([big, little]))
+    }
+
+    fn read_constant(&mut self) -> Result<Value, RuntimeError> {
+        let constant_offset = self.read_u8()?;
         self.code
             .get_constant(constant_offset as usize)
             .ok_or(RuntimeError::ConstantNotFound)
+            .copied()
     }
 }
 
@@ -174,6 +217,15 @@ impl Stack {
             .ok_or(RuntimeError::EmptyStack)
     }
 
+    fn get_at(&self, idx: usize) -> Result<&Value, RuntimeError> {
+        self.stack.get(idx).ok_or(RuntimeError::EmptyStack)
+    }
+
+    fn set_at(&mut self, idx: usize, value: Value) -> Result<(), RuntimeError> {
+        *self.stack.get_mut(idx).ok_or(RuntimeError::EmptyStack)? = value;
+        Ok(())
+    }
+
     fn push(&mut self, value: Value) {
         self.stack.push(value);
     }
@@ -183,6 +235,21 @@ impl Stack {
         heap: &'heap ObjectHeap,
     ) -> StackPrinter<'stack, 'heap> {
         StackPrinter { stack: self, heap }
+    }
+}
+
+impl From<HeapError> for RuntimeError {
+    fn from(value: HeapError) -> Self {
+        Self::HeapError(value)
+    }
+}
+
+impl From<ValueError> for RuntimeError {
+    fn from(value: ValueError) -> Self {
+        match value {
+            ValueError::HeapError(h) => Self::HeapError(h),
+            v => Self::ValueError(v)
+        }
     }
 }
 

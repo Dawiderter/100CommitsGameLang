@@ -39,6 +39,15 @@ impl CodeChunk {
     pub fn get_constant(&self, constant: usize) -> Option<&Value> {
         self.constants.get(constant)
     }
+
+    pub fn patch(&mut self, offset : usize, code: u8) {
+        self.code[offset] = code;
+    }
+
+    pub fn size(&self) -> usize {
+        self.code.len()
+    }
+
 }
 
 impl Default for CodeChunk {
@@ -126,6 +135,12 @@ impl<'code, 'heap> Dissasembler<'code, 'heap> {
             OP_PRINT => { self.dissasemble_op(f, "PRINT")?; 1 }
             OP_POP => { self.dissasemble_op(f, "POP")?; 1 }
             OP_DEF_GLOBAL => { self.dissasemble_op(f, "DEF GLOBAL")?; self.dissasemble_constant(f, offset + 1)?; 2 }
+            OP_GET_GLOBAL => { self.dissasemble_op(f, "GET GLOBAL")?; self.dissasemble_constant(f, offset + 1)?; 2 }
+            OP_SET_GLOBAL => { self.dissasemble_op(f, "SET GLOBAL")?; self.dissasemble_constant(f, offset + 1)?; 2 }
+            OP_GET_LOCAL => { self.dissasemble_op(f, "GET LOCAL")?; self.dissasemble_arg(f, offset + 1)?; 2 }
+            OP_SET_LOCAL => { self.dissasemble_op(f, "SET LOCAL")?; self.dissasemble_arg(f, offset + 1)?; 2 }
+            OP_JUMP => { self.dissasemble_op(f, "JUMP")?; self.dissasemble_jump_target(f, offset + 1)?; 3 }
+            OP_JUMP_F => { self.dissasemble_op(f, "JUMPF")?; self.dissasemble_jump_target(f, offset + 1)?; 3 }
             _ => { self.dissasemble_op(f, "UNKNOWN")?; 1 }
         };
     
@@ -149,6 +164,20 @@ impl<'code, 'heap> Dissasembler<'code, 'heap> {
         }
     }
 
+    fn dissasemble_arg(&self, f: &mut impl std::fmt::Write, offset: usize) -> Result<(), std::fmt::Error> {
+        use owo_colors::OwoColorize;
+        
+        let arg = self.chunk.code[offset];
+        write!(f, " {:>3}", arg.green())
+    }
+
+    fn dissasemble_jump_target(&self, f: &mut impl std::fmt::Write, offset: usize) -> Result<(), std::fmt::Error> {
+        use owo_colors::OwoColorize;
+
+        let arg = u16::from_be_bytes([self.chunk.code[offset], self.chunk.code[offset+1]]);
+        write!(f, " {:>3} -> {:>04}", arg.green(), (arg as usize + offset + 2).red())
+    }
+    
     fn dissasemble_chunk(&self, f: &mut impl std::fmt::Write) -> Result<(), std::fmt::Error> {
         let mut offset = 0;
         while offset < self.chunk.code.len() {

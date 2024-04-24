@@ -2,9 +2,15 @@ use std::fmt::Display;
 
 use ecow::eco_format;
 
-use super::object::{ObjectHeap, ObjectKey, ObjectKind};
+use super::object::{HeapError, ObjectHeap, ObjectKey, ObjectKind};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+pub enum ValueError {
+    UnSupportedOperation,
+    HeapError(HeapError),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Value {
     Nil,
     Number(f64),
@@ -13,18 +19,21 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn neg(&self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn is_falsey(&self) -> bool {
+        matches!(self, Value::Nil | Value::Bool(false))
+    }
+    pub fn neg(&self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match self {
             Value::Number(a) => Value::Number(-a),
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(res)
+        Ok(res)
     }
-    pub fn add(&self, other: &Self, heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn add(&self, other: &Self, heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => Value::Number(a + b),
             (Value::Object(a), Value::Object(b)) => {
-                match (&heap.get_object(*a).kind, &heap.get_object(*b).kind) {
+                match (&heap.get_object(*a)?.kind, &heap.get_object(*b)?.kind) {
                     (ObjectKind::String(a), ObjectKind::String(b)) => {
                         let joined_string = eco_format!("{}{}", a, b);
                         let key = heap.intern_string(joined_string);
@@ -32,75 +41,82 @@ impl Value {
                     },
                 }
             }
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(res)
+        Ok(res)
     }
-    pub fn sub(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn sub(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => Value::Number(a - b),
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(res)
+        Ok(res)
     }
-    pub fn mul(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn mul(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => Value::Number(a * b),
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(res)
+        Ok(res)
     }
-    pub fn div(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn div(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => Value::Number(a / b),
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(res)
+        Ok(res)
     }
-    pub fn not(&self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn not(&self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match self {
             Value::Bool(val) => !val,
             Value::Nil => true,
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(Value::Bool(res))
+        Ok(Value::Bool(res))
     }
-    pub fn and(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn and(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => *a && *b,
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(Value::Bool(res))
+        Ok(Value::Bool(res))
     }
-    pub fn or(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn or(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Bool(a), Value::Bool(b)) => *a || *b,
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(Value::Bool(res))
+        Ok(Value::Bool(res))
     }
-    pub fn equal(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn equal(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => a == b,
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
-            _ => return None,
+            (Value::Object(a), Value::Object(b)) => a == b,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(Value::Bool(res))
+        Ok(Value::Bool(res))
     }
-    pub fn greater(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn greater(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => a > b,
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(Value::Bool(res))
+        Ok(Value::Bool(res))
     }
-    pub fn less(&self, other: &Self, _heap: &mut ObjectHeap) -> Option<Value> {
+    pub fn less(&self, other: &Self, _heap: &mut ObjectHeap) -> Result<Value, ValueError> {
         let res = match (self, other) {
             (Value::Number(a), Value::Number(b)) => a < b,
-            _ => return None,
+            _ => return Err(ValueError::UnSupportedOperation),
         };
-        Some(Value::Bool(res))
+        Ok(Value::Bool(res))
+    }
+}
+
+impl From<HeapError> for ValueError {
+    fn from(value: HeapError) -> Self {
+        Self::HeapError(value)
     }
 }
 
@@ -137,9 +153,10 @@ impl<'value, 'heap> Display for ValueHeapDisplay<'value, 'heap> {
                 let obj = self
                     .heap
                     .get_object(*key);
-                obj.fmt(f)
+                obj.unwrap().fmt(f)
             }
             val => val.fmt(f),
         }
     }
 }
+

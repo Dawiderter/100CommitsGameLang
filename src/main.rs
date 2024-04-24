@@ -62,6 +62,8 @@ fn repl() {
             continue;
         }
 
+        log::info!("\n{}", code.dissasemble().with_heap(&heap));
+
         let mut vm = VM::init(&code, &mut heap);
         if let Err(err) = vm.run() {
             report_runtime_error("REPL", &line, err, vm.current_span())

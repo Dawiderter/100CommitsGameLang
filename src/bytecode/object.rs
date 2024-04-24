@@ -4,6 +4,8 @@ use ahash::AHashMap;
 use ecow::EcoString;
 use slotmap::{new_key_type, SlotMap};
 
+use super::value::Value;
+
 #[derive(Debug)]
 pub struct Object {
     pub kind: ObjectKind,
@@ -20,12 +22,19 @@ impl Object {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum HeapError {
+    ObjectNotFound,
+    GlobalVariableNotFound
+}
+
 new_key_type! { pub struct ObjectKey; }
 
 #[derive(Debug)]
 pub struct ObjectHeap {
     heap: SlotMap<ObjectKey, Object>,
     interner: AHashMap<EcoString, ObjectKey>,
+    globals: AHashMap<ObjectKey, Value>,
     dynamic_memory_used: usize,
 }
 
@@ -34,6 +43,7 @@ impl ObjectHeap {
         Self {
             heap: SlotMap::with_key(),
             interner: AHashMap::new(),
+            globals: AHashMap::new(),
             dynamic_memory_used: 0,
         }
     }
@@ -49,10 +59,28 @@ impl ObjectHeap {
         })
     }
 
-    pub fn get_object(&self, key: ObjectKey) -> &Object {
+    pub fn put_as_global(&mut self, identifier: ObjectKey, object: Value) {
+        assert!(matches!(
+            self.heap.get(identifier),
+            Some(Object {
+                kind: ObjectKind::String(_),
+                ..
+            })
+        ));
+        self.globals.insert(identifier, object);
+    }
+
+    pub fn get_global(&self, identifier: ObjectKey) -> Result<Value, HeapError> {
+        self.globals
+            .get(&identifier)
+            .copied()
+            .ok_or(HeapError::GlobalVariableNotFound)
+    }
+
+    pub fn get_object(&self, key: ObjectKey) -> Result<&Object, HeapError> {
         self.heap
             .get(key)
-            .expect("Internal error: Tried to get freed object")
+            .ok_or(HeapError::ObjectNotFound)
     }
 
     pub fn live_count(&self) -> usize {
