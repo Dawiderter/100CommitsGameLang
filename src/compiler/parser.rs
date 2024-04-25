@@ -50,7 +50,14 @@ impl<'source, 'code, 'heap> Parser<'source, 'code, 'heap> {
                             parser.lexer.next();
                             break;
                         }
-                        Token::Class | Token::Fn | Token::Let | Token::For | Token::If | Token::While | Token::Print | Token::Return => {
+                        Token::Class
+                        | Token::Fn
+                        | Token::Let
+                        | Token::For
+                        | Token::If
+                        | Token::While
+                        | Token::Print
+                        | Token::Return => {
                             break;
                         }
                         _ => {
@@ -84,20 +91,30 @@ impl<'source, 'code, 'heap> Parser<'source, 'code, 'heap> {
             Token::If => {
                 self.lexer.next();
                 self.expression()?;
-                let els_jmp = self.emit_jump(OP_JUMP_F);
+                let els_jmp = self.emit_jump_partial(OP_JUMP_F);
                 self.code.push_code(OP_POP);
                 self.block()?;
-                let then_end_jmp = self.emit_jump(OP_JUMP);
+                let then_end_jmp = self.emit_jump_partial(OP_JUMP);
 
-                self.patch_jump(els_jmp, self.code.size())?;   
+                self.patch_jump(els_jmp, self.code.size())?;
                 self.code.push_code(OP_POP);
-                             
+
                 if self.lexer.peek() == Some(Token::Else) {
                     self.lexer.next();
                     self.block()?;
                 }
                 self.patch_jump(then_end_jmp, self.code.size())?;
-
+            }
+            Token::While => {
+                self.lexer.next();
+                let loop_start = self.code.size(); 
+                self.expression()?;
+                let loop_end = self.emit_jump_partial(OP_JUMP_F);
+                self.code.push_code(OP_POP);
+                self.block()?;
+                self.emit_jump_full(OP_JUMP, loop_start)?;
+                self.patch_jump(loop_end, self.code.size())?;
+                self.code.push_code(OP_POP);
             }
             Token::Let => {
                 self.lexer.next();
@@ -361,7 +378,18 @@ impl<'source, 'code, 'heap> Parser<'source, 'code, 'heap> {
         self.code.push_code(constant);
     }
 
-    fn emit_jump(&mut self, instr: u8) -> usize {
+    fn emit_jump_full(&mut self, instr: u8, to: usize) -> Result<(), ParsingError> {
+        let relative_jump: i16 = (to as isize - self.code.size() as isize - 3)
+            .try_into()
+            .map_err(|_| self.error_at_current("Jump too long".to_owned()))?;
+        let [big, little] = relative_jump.to_be_bytes();
+        self.code.push_code(instr);
+        self.code.push_code(big);
+        self.code.push_code(little);
+        Ok(())
+    }
+
+    fn emit_jump_partial(&mut self, instr: u8) -> usize {
         self.code.push_code(instr);
         self.code.push_code(0xFF);
         self.code.push_code(0xFF);
@@ -369,8 +397,10 @@ impl<'source, 'code, 'heap> Parser<'source, 'code, 'heap> {
     }
 
     fn patch_jump(&mut self, offset: usize, to: usize) -> Result<(), ParsingError> {
-        let relative_jump : u16 = (to - offset - 2).try_into().map_err(|_| self.error_at_current("Jump too long".to_owned()))?;
-        let [big,little] = relative_jump.to_be_bytes();
+        let relative_jump: i16 = (to as isize - offset as isize - 2)
+            .try_into()
+            .map_err(|_| self.error_at_current("Jump too long".to_owned()))?;
+        let [big, little] = relative_jump.to_be_bytes();
         self.code.patch(offset, big);
         self.code.patch(offset + 1, little);
         Ok(())

@@ -174,8 +174,8 @@ impl<'code, 'heap> Dissasembler<'code, 'heap> {
     fn dissasemble_jump_target(&self, f: &mut impl std::fmt::Write, offset: usize) -> Result<(), std::fmt::Error> {
         use owo_colors::OwoColorize;
 
-        let arg = u16::from_be_bytes([self.chunk.code[offset], self.chunk.code[offset+1]]);
-        write!(f, " {:>3} -> {:>04}", arg.green(), (arg as usize + offset + 2).red())
+        let arg = i16::from_be_bytes([self.chunk.code[offset], self.chunk.code[offset+1]]);
+        write!(f, " {:>3} -> {:>04}", arg.green(), (offset as isize + arg as isize + 2).red())
     }
     
     fn dissasemble_chunk(&self, f: &mut impl std::fmt::Write) -> Result<(), std::fmt::Error> {

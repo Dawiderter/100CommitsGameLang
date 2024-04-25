@@ -138,14 +138,14 @@ impl<'code, 'heap> VM<'code, 'heap> {
                 self.stack.set_at(idx as usize, *set)?;
             }
             OP_JUMP => {
-                let pos = self.read_u16()?;
-                self.pc += pos as usize;
+                let pos = self.read_i16()?;
+                self.pc = (self.pc as isize + pos as isize) as usize;
             }
             OP_JUMP_F => {
-                let pos = self.read_u16()?;
+                let pos = self.read_i16()?;
                 let value = self.stack.peek(0)?;
                 if value.is_falsey() {
-                    self.pc += pos as usize;
+                    self.pc = (self.pc as isize + pos as isize) as usize;
                 }
             }
             OP_TRUE => self.stack.push(Value::Bool(true)),
@@ -175,7 +175,7 @@ impl<'code, 'heap> VM<'code, 'heap> {
             .ok_or(RuntimeError::UnexpectedEnd)
     }
 
-    fn read_u16(&mut self) -> Result<u16, RuntimeError> {
+    fn read_i16(&mut self) -> Result<i16, RuntimeError> {
         self.pc += 2;
         let big = self.code
             .get_byte(self.pc - 2)
@@ -183,7 +183,7 @@ impl<'code, 'heap> VM<'code, 'heap> {
         let little = self.code
             .get_byte(self.pc - 1)
             .ok_or(RuntimeError::UnexpectedEnd)?;
-        Ok(u16::from_be_bytes([big, little]))
+        Ok(i16::from_be_bytes([big, little]))
     }
 
     fn read_constant(&mut self) -> Result<Value, RuntimeError> {
